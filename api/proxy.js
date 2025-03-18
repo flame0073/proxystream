@@ -1,6 +1,5 @@
-// api/proxy.js
+// api/hls.js
 export default async function handler(req, res) {
-  // Get the URL parameter from the request
   const { url } = req.query;
   
   if (!url) {
@@ -8,57 +7,65 @@ export default async function handler(req, res) {
   }
   
   try {
-    // Parse the URL to modify headers or parameters if needed
+    // Parse the target URL
     const targetUrl = decodeURIComponent(url);
     
-    // Custom fetch with modified headers to mimic a browser
+    // Custom fetch with headers optimized for HLS streams
     const response = await fetch(targetUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36',
         'Accept': '*/*',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://watchtv.best/',
-        'Origin': 'https://watchtv.best',
-        'Connection': 'keep-alive'
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Referer': 'http://watchtv.best/',
+        'Origin': 'http://watchtv.best',
+        'sec-ch-ua': '"Google Chrome";v="113", "Chromium";v="113", "Not-A.Brand";v="24"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin'
       },
-      redirect: 'follow',
-      credentials: 'include'
+      redirect: 'follow'
     });
     
+    // Handle responses with error status codes
     if (!response.ok) {
       console.error(`Error from source: Status ${response.status}`);
-      return res.status(response.status).json({ 
-        error: `Source returned status code: ${response.status}` 
-      });
+      
+      // If we get a 4xx or 5xx error but have a response body, try to pass it along
+      try {
+        const errorText = await response.text();
+        return res.status(response.status).send(errorText);
+      } catch {
+        return res.status(response.status).json({ 
+          error: `Source returned status code: ${response.status}` 
+        });
+      }
     }
     
-    // Get all headers and forward relevant ones
-    const headers = Object.fromEntries(response.headers);
+    // Get content type and set response headers
+    const contentType = response.headers.get('content-type');
+    res.setHeader('Content-Type', contentType || 'application/vnd.apple.mpegurl');
     
-    // Copy content type and other important headers
-    if (headers['content-type']) {
-      res.setHeader('Content-Type', headers['content-type']);
+    // For m3u8 playlists, we may need to modify the content to rewrite URLs
+    if (contentType && contentType.includes('application/vnd.apple.mpegurl')) {
+      const playlistContent = await response.text();
+      
+      // Here you could process the m3u8 content to rewrite URLs if needed
+      // For now, just pass it through
+      return res.status(200).send(playlistContent);
     }
     
-    if (headers['content-disposition']) {
-      res.setHeader('Content-Disposition', headers['content-disposition']);
-    }
-    
-    if (headers['cache-control']) {
-      res.setHeader('Cache-Control', headers['cache-control']);
-    }
-    
-    // Get the response data
+    // For binary content (ts segments, etc.), pass through as buffer
     const data = await response.arrayBuffer();
-    
-    // Send the response
-    res.status(200).send(Buffer.from(data));
+    return res.status(200).send(Buffer.from(data));
   } catch (error) {
-    console.error('Error proxying request:', error);
-    res.status(500).json({ 
-      error: 'Failed to proxy request', 
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    console.error('Error proxying HLS stream:', error);
+    return res.status(500).json({ 
+      error: 'Failed to proxy HLS stream', 
+      message: error.message
     });
   }
 }
