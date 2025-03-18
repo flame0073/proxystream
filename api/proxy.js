@@ -1,6 +1,4 @@
 // api/proxy.js
-import fetch from 'node-fetch';
-
 export default async function handler(req, res) {
   // Get the URL parameter from the request
   const { url } = req.query;
@@ -13,17 +11,25 @@ export default async function handler(req, res) {
     // Fetch the content from the source URL
     const response = await fetch(url);
     
+    if (!response.ok) {
+      return res.status(response.status).json({ 
+        error: `Source returned status code: ${response.status}` 
+      });
+    }
+    
     // Get the content type from the response
     const contentType = response.headers.get('content-type');
     
     // Set the appropriate content type in the response
     res.setHeader('Content-Type', contentType || 'application/octet-stream');
     
-    // Stream the response back to the client
-    const stream = response.body;
-    stream.pipe(res);
+    // Get the response as an array buffer
+    const data = await response.arrayBuffer();
+    
+    // Send the data back to the client
+    res.status(200).send(Buffer.from(data));
   } catch (error) {
     console.error('Error proxying request:', error);
-    res.status(500).json({ error: 'Failed to proxy request' });
+    res.status(500).json({ error: 'Failed to proxy request', message: error.message });
   }
 }
